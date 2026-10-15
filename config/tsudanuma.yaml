@@ -1,5 +1,7 @@
 config:
   - waypoint_id: registed_0_1299399000000
-    map_file: /home/orne-box/script_orne/map/tsudanuma/2d/tsudanuma2-18
+    map_file: ../map/tsudanuma2-18.yaml
+    reset_initialpose: true
   - waypoint_id: registed_0_96091000000
-    map_file: /home/orne-box/script_orne/map/tsudanuma/2d/tsudanuma2-3
+    map_file: ../map/tsudanuma2-3.yaml
+    reset_initialpose: true

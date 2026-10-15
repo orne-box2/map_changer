@@ -1,9 +1,9 @@
 config:
   - waypoint_id: 1
-    map_file: /home/orne-box/shiozawa_ws/src/map_changer/map/tsudanuma_cut_1
+    map_file: ../map/tsudanuma_cut_1.yaml
   - waypoint_id: registed_0_1744525932584876896
-    map_file: /home/orne-box/shiozawa_ws/src/map_changer/map/tsudanuma_cut_2
+    map_file: ../map/tsudanuma_cut_2.yaml
   - waypoint_id: registed_0_1749702532184782786
-    map_file: /home/orne-box/shiozawa_ws/src/map_changer/map/tsudanuma_cut_3
-  - wayponit_id: registed_0_1749702620020247755
-    map_file: /home/orne-box/shiozawa_ws/src/map_changer/map/tsudanuma_cut_4
+    map_file: ../map/tsudanuma_cut_3.yaml
+  - waypoint_id: registed_0_1749702620020247755
+    map_file: ../map/tsudanuma_cut_4.yaml

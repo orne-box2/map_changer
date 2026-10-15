@@ -1,9 +1,23 @@
 <launch>
 <arg name="file_path"   default="$(find map_changer)/config/test1.yaml"/>
-<arg name="wait_time"   default="10.0"/>
+<arg name="pose_topic" default="/amcl_pose"/>
+<arg name="localization_node" default="/amcl"/>
+<arg name="set_map_service" default="/set_map"/>
+<arg name="global_frame" default="map"/>
+<arg name="robot_base_frame" default="base_link"/>
+<arg name="pose_timeout" default="5.0"/>
+<arg name="check_map_bounds" default="true"/>
+<arg name="map_margin" default="0.6"/>
 
 <node pkg="map_changer" type="map_changer_node" name="map_changer_node" output="screen">
     <param name="file_path" value="$(arg file_path)"/>
-    <param name="wait_time" value="$(arg wait_time)"/>
+    <param name="pose_topic" value="$(arg pose_topic)"/>
+    <param name="localization_node" value="$(arg localization_node)"/>
+    <param name="set_map_service" value="$(arg set_map_service)"/>
+    <param name="global_frame" value="$(arg global_frame)"/>
+    <param name="robot_base_frame" value="$(arg robot_base_frame)"/>
+    <param name="pose_timeout" value="$(arg pose_timeout)"/>
+    <param name="check_map_bounds" value="$(arg check_map_bounds)"/>
+    <param name="map_margin" value="$(arg map_margin)"/>
 </node>
 </launch>
