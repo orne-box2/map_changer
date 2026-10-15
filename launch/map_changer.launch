@@ -5,6 +5,10 @@
 <arg name="set_map_service" default="/set_map"/>
 <arg name="global_frame" default="map"/>
 <arg name="robot_base_frame" default="base_link"/>
+<arg name="odom_frame" default="odom"/>
+<arg name="replace_map_servers" default="true"/>
+<arg name="keep_tf_during_map_update" default="true"/>
+<arg name="tf_bridge_timeout" default="5.0"/>
 <arg name="pose_timeout" default="5.0"/>
 <arg name="check_map_bounds" default="true"/>
 <arg name="map_margin" default="0.6"/>
@@ -16,6 +20,10 @@
     <param name="set_map_service" value="$(arg set_map_service)"/>
     <param name="global_frame" value="$(arg global_frame)"/>
     <param name="robot_base_frame" value="$(arg robot_base_frame)"/>
+    <param name="odom_frame" value="$(arg odom_frame)"/>
+    <param name="replace_map_servers" value="$(arg replace_map_servers)"/>
+    <param name="keep_tf_during_map_update" value="$(arg keep_tf_during_map_update)"/>
+    <param name="tf_bridge_timeout" value="$(arg tf_bridge_timeout)"/>
     <param name="pose_timeout" value="$(arg pose_timeout)"/>
     <param name="check_map_bounds" value="$(arg check_map_bounds)"/>
     <param name="map_margin" value="$(arg map_margin)"/>

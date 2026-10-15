@@ -37,6 +37,29 @@ std::string map_path(std::string value, const fs::path& directory, const std::st
     if (!fs::is_regular_file(path)) throw std::runtime_error(context + ": map YAML does not exist: " + path.string());
     return path.string();
 }
+MapConfig map_config(const YAML::Node& entry, const fs::path& directory, const std::string& context)
+{
+    if (!entry.IsMap()) throw std::runtime_error(context + " must be a mapping");
+    MapConfig config;
+    config.map_file = map_path(scalar(entry, "map_file", context), directory, context + ".map_file");
+    if (entry["costmap_file"]) {
+        config.costmap_file = map_path(scalar(entry, "costmap_file", context), directory, context + ".costmap_file");
+    } else {
+        const fs::path path(config.map_file);
+        const auto sibling = path.parent_path() / (path.stem().string() + "_for_costmap" + path.extension().string());
+        config.costmap_file = fs::is_regular_file(sibling) ? sibling.string() : config.map_file;
+    }
+    return config;
+}
+}
+std::optional<MapConfig> load_initial_map(const std::string& file_path)
+{
+    const auto root = YAML::LoadFile(file_path);
+    if (!root.IsMap() || !root["initial_map"]) return std::nullopt;
+    const auto entry = root["initial_map"];
+    if (entry.IsMap() && entry["reset_initialpose"] && entry["reset_initialpose"].as<bool>())
+        throw std::runtime_error(file_path + ": initial_map must preserve the current localized pose");
+    return map_config(entry, fs::absolute(file_path).parent_path(), file_path + ": initial_map");
 }
 std::vector<MapConfig> load_config(const std::string& file_path)
 {
@@ -51,17 +74,9 @@ std::vector<MapConfig> load_config(const std::string& file_path)
         const YAML::Node entry = entries[i];
         const auto context = file_path + ": config[" + std::to_string(i) + "]";
         if (!entry.IsMap()) throw std::runtime_error(context + " must be a mapping");
-        MapConfig config;
+        MapConfig config = map_config(entry, directory, context);
         config.waypoint_id = scalar(entry, "waypoint_id", context);
         if (!ids.insert(config.waypoint_id).second) throw std::runtime_error(context + ": duplicate waypoint_id " + config.waypoint_id);
-        config.map_file = map_path(scalar(entry, "map_file", context), directory, context + ".map_file");
-        if (entry["costmap_file"]) {
-            config.costmap_file = map_path(scalar(entry, "costmap_file", context), directory, context + ".costmap_file");
-        } else {
-            const fs::path path(config.map_file);
-            const auto sibling = path.parent_path() / (path.stem().string() + "_for_costmap" + path.extension().string());
-            config.costmap_file = fs::is_regular_file(sibling) ? sibling.string() : config.map_file;
-        }
         if (entry["reset_initialpose"]) config.reset_initialpose = entry["reset_initialpose"].as<bool>();
         result.push_back(config);
     }

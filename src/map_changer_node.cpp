@@ -4,7 +4,11 @@
 #include <stdexcept>
 #include <ros/package.h>
 #include <std_msgs/String.h>
+#include <std_srvs/Empty.h>
 #include <tf/transform_datatypes.h>
+#include <ros/master.h>
+#include <ros/network.h>
+#include <xmlrpcpp/XmlRpcClient.h>
 
 namespace map_changer {
 namespace {
@@ -13,28 +17,72 @@ std::string frame(std::string value)
     while (!value.empty() && value.front() == '/') value.erase(value.begin());
     return value;
 }
+class NodeClient : public XmlRpc::XmlRpcClient {
+public:
+    using XmlRpc::XmlRpcClient::XmlRpcClient;
+    void poll() { _disp.work(0.01); }
+};
+bool node_rpc(const std::string& uri, const char* method, const XmlRpc::XmlRpcValue& args,
+              XmlRpc::XmlRpcValue& result)
+{
+    std::string host;
+    uint32_t port;
+    if (!ros::network::splitURI(uri, host, port)) return false;
+    NodeClient client(host.c_str(), port, "/");
+    if (!client.executeNonBlock(method, args)) return false;
+    const auto deadline = ros::WallTime::now() + ros::WallDuration(1.0);
+    while (ros::ok() && ros::WallTime::now() < deadline) {
+        client.poll();
+        if (client.executeCheckDone(result))
+            return !client.isFault() && result.getType() == XmlRpc::XmlRpcValue::TypeArray &&
+                result.size() == 3 && result[0].getType() == XmlRpc::XmlRpcValue::TypeInt && int(result[0]) == 1;
+    }
+    client.close();
+    return false;
+}
 }
 map_changer_node::map_changer_node()
 {
-    std::string file_path, pose_topic, set_map_service;
+    std::string file_path, pose_topic, set_map_service, nomotion_service;
     pnh_.param("file_path", file_path, ros::package::getPath("map_changer") + "/config/test1.yaml");
     pnh_.param("pose_timeout", pose_timeout_, 5.0);
     pnh_.param("check_map_bounds", check_map_bounds_, true);
     pnh_.param("map_margin", map_margin_, 0.6);
     pnh_.param("global_frame", global_frame_, std::string("map"));
     pnh_.param("robot_base_frame", robot_base_frame_, std::string("base_link"));
+    pnh_.param("odom_frame", odom_frame_, std::string("odom"));
     pnh_.param("localization_node", localization_node_, std::string("/amcl"));
     pnh_.param("pose_topic", pose_topic, std::string("/amcl_pose"));
     pnh_.param("set_map_service", set_map_service, std::string("/set_map"));
+    pnh_.param("nomotion_service", nomotion_service, std::string("/request_nomotion_update"));
+    pnh_.param("replace_map_servers", replace_map_servers_, true);
+    if (!pnh_.getParam("map_server_nodes", map_server_nodes_))
+        map_server_nodes_ = {"/map_server", "/map_server_for_costmap"};
+    pnh_.param("keep_tf_during_map_update", keep_tf_during_map_update_, true);
+    pnh_.param("tf_bridge_timeout", tf_bridge_timeout_, 5.0);
+    nh_.param(localization_node_ + "/transform_tolerance", transform_tolerance_, 0.5);
     global_frame_ = frame(global_frame_);
     robot_base_frame_ = frame(robot_base_frame_);
+    odom_frame_ = frame(odom_frame_);
     if (global_frame_.empty()) throw std::runtime_error("global_frame must not be empty");
     if (robot_base_frame_.empty()) throw std::runtime_error("robot_base_frame must not be empty");
+    if (odom_frame_.empty() || odom_frame_ == global_frame_)
+        throw std::runtime_error("odom_frame must differ from global_frame");
+    if (!std::isfinite(tf_bridge_timeout_) || tf_bridge_timeout_ <= 0 ||
+        !std::isfinite(transform_tolerance_) || transform_tolerance_ < 0)
+        throw std::runtime_error("Invalid TF bridge timeout/AMCL transform tolerance");
+    transform_tolerance_ = std::max(0.1, transform_tolerance_);
     if (!std::isfinite(pose_timeout_) || pose_timeout_ <= 0)
         throw std::runtime_error("pose_timeout must be positive and finite");
     if (!std::isfinite(map_margin_) || map_margin_ < 0)
         throw std::runtime_error("map_margin must be nonnegative and finite");
     config_list_ = load_config(file_path);
+    initial_map_ = load_initial_map(file_path);
+    if (initial_map_ && check_map_bounds_) {
+        initial_map_bounds_ = load_map_bounds(initial_map_->map_file);
+        initial_costmap_bounds_ = initial_map_->costmap_file == initial_map_->map_file ?
+            initial_map_bounds_ : load_map_bounds(initial_map_->costmap_file);
+    }
     if (check_map_bounds_) {
         for (const auto& config : config_list_) {
             map_bounds_.push_back(load_map_bounds(config.map_file));
@@ -49,9 +97,10 @@ map_changer_node::map_changer_node()
     pose_sub_ = nh_.subscribe(pose_topic, 1, &map_changer_node::cb_pose, this);
     route_sub_ = nh_.subscribe("/waypoint_manager/route", 1, &map_changer_node::cb_route, this);
     set_map_srv_ = nh_.serviceClient<nav_msgs::SetMap>(set_map_service);
+    nomotion_srv_ = nh_.serviceClient<std_srvs::Empty>(nomotion_service);
     // Older navigation launches register both map servers under /change_map
     // and /static_map. Load and publish the new grids here so those launches
-    // need no service remaps or map-server restarts.
+    // need no service remaps. Retire their processes only after a successful handover.
     const ros::SubscriberStatusCallback connected =
         [this](const ros::SingleSubscriberPublisher& subscriber) { map_connected(subscriber); };
     map_pub_ = nh_.advertise<nav_msgs::OccupancyGrid>("/map", 1, connected, ros::SubscriberStatusCallback(), ros::VoidConstPtr(), true);
@@ -60,6 +109,9 @@ map_changer_node::map_changer_node()
     costmap_metadata_pub_ = nh_.advertise<nav_msgs::MapMetaData>("/map_metadata_for_costmap", 1, connected, ros::SubscriberStatusCallback(), ros::VoidConstPtr(), true);
     status_pub_ = nh_.advertise<std_msgs::String>("/map_changer/status", 1, true);
     status("idle");
+    bridge_timer_ = nh_.createWallTimer(ros::WallDuration(0.01), &map_changer_node::bridge_tf, this);
+    if (initial_map_)
+        ROS_INFO("Initial map (independent of waypoint IDs): %s", initial_map_->map_file.c_str());
     ROS_INFO("Loaded %zu map transitions from %s (no navigation pause/cancel)", config_list_.size(), file_path.c_str());
 }
 void map_changer_node::cb_wp(const waypoint_manager_msgs::Waypoint::ConstPtr& msg)
@@ -147,33 +199,49 @@ void map_changer_node::fail(const std::string& message)
 void map_changer_node::map_connected(const ros::SingleSubscriberPublisher&)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Other map servers retain their original latched grids. Send the active
-    // grids again after their initial deliveries when RViz/costmaps reconnect.
+    // During handover (or with replacement disabled), old latched grids may
+    // still arrive. Reassert the active data when RViz/costmaps reconnect.
     refresh_maps_ = true;
     refresh_after_ = ros::WallTime::now() + ros::WallDuration(0.2);
 }
 void map_changer_node::publish_maps()
 {
     map_pub_.publish(active_map_);
-    metadata_pub_.publish(active_map_.info);
+    metadata_pub_.publish(active_map_->info);
     costmap_pub_.publish(active_costmap_);
-    costmap_metadata_pub_.publish(active_costmap_.info);
+    costmap_metadata_pub_.publish(active_costmap_->info);
 }
 bool map_changer_node::get_map(nav_msgs::GetMap::Request&, nav_msgs::GetMap::Response& response)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!have_active_maps_) return false;
-    response.map = active_map_;
+    response.map = *active_map_;
     return true;
 }
 bool map_changer_node::get_costmap(nav_msgs::GetMap::Request&, nav_msgs::GetMap::Response& response)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!have_active_maps_) return false;
-    response.map = active_costmap_;
+    response.map = *active_costmap_;
     return true;
 }
-bool map_changer_node::set_localization_map(const Transition& transition, const nav_msgs::OccupancyGrid& grid)
+void map_changer_node::bridge_tf(const ros::WallTimerEvent&)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!bridge_active_ || (ros::WallTime::now() - bridge_started_).toSec() > tf_bridge_timeout_) return;
+    const auto now = ros::Time::now();
+    if (now.isZero() || now + ros::Duration(0.1) < bridge_transform_.stamp_) return;
+    // Keep the bridge horizon shorter than AMCL's normal future dating so its
+    // next scan can take over immediately, including with a quantized sim clock.
+    const auto stamp = now + ros::Duration(std::min(transform_tolerance_, 0.25));
+    if (stamp <= bridge_last_stamp_) return;
+    // Hold only the localization correction during synchronous AMCL map loading.
+    // odom->base_link continues to track motion; never bridge a coordinate reset.
+    bridge_transform_.stamp_ = stamp;
+    tf_broadcaster_.sendTransform(bridge_transform_);
+    bridge_last_stamp_ = stamp;
+}
+bool map_changer_node::set_localization_map(const MapConfig& config, const Transition& transition, const nav_msgs::OccupancyGrid& grid)
 {
     if (!grid.info.width || !grid.info.height || !std::isfinite(grid.info.resolution) || grid.info.resolution <= 0 ||
         grid.data.size() != static_cast<std::size_t>(grid.info.width) * grid.info.height ||
@@ -184,7 +252,7 @@ bool map_changer_node::set_localization_map(const Transition& transition, const 
     nav_msgs::SetMap request;
     request.request.map = grid;
     auto& pose = request.request.initial_pose;
-    if (config_list_[transition.config_index].reset_initialpose) {
+    if (config.reset_initialpose) {
         pose.pose.pose = transition.target_pose;
         pose.pose.pose.position.z = 0;
         pose.pose.covariance[0] = pose.pose.covariance[7] = 0.25;
@@ -199,7 +267,25 @@ bool map_changer_node::set_localization_map(const Transition& transition, const 
     // intervening odometry to project this pose to the service execution time.
     // Unstamped inputs have no measurement time, so use the current ROS time.
     if (pose.header.stamp.isZero()) pose.header.stamp = ros::Time::now();
-    if (!set_map_srv_.call(request) || !request.response.success) {
+    if (keep_tf_during_map_update_ && !config.reset_initialpose) {
+        try {
+            tf::StampedTransform transform;
+            tf_listener_.lookupTransform(global_frame_, odom_frame_, ros::Time(0), transform);
+            if (std::abs((ros::Time::now() - transform.stamp_).toSec()) <= pose_timeout_) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                bridge_transform_ = transform;
+                bridge_last_stamp_ = transform.stamp_;
+                bridge_started_ = ros::WallTime::now();
+                bridge_active_ = true;
+            }
+        } catch (const tf::TransformException& e) { ROS_WARN("TF bridge unavailable: %s", e.what()); }
+    }
+    const bool accepted = set_map_srv_.call(request) && request.response.success;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bridge_active_ = false;
+    }
+    if (!accepted) {
         fail("Localization rejected set_map: " + set_map_srv_.getService());
         return false;
     }
@@ -211,8 +297,125 @@ bool map_changer_node::set_localization_map(const Transition& transition, const 
         position.position.x, position.position.y, tf::getYaw(position.orientation));
     return true;
 }
+bool map_changer_node::activate_map(const MapConfig& config, const Transition& transition)
+{
+    if (have_active_maps_ && active_map_file_ == config.map_file &&
+        active_costmap_file_ == config.costmap_file && !config.reset_initialpose) return true;
+    nav_msgs::OccupancyGrid::Ptr map(new nav_msgs::OccupancyGrid), costmap;
+    try {
+        *map = load_map(config.map_file, global_frame_);
+        if (config.costmap_file == config.map_file) costmap = map;
+        else {
+            costmap.reset(new nav_msgs::OccupancyGrid(load_map(config.costmap_file, global_frame_)));
+            // Companion YAMLs can reference the same image. Keep one raster in memory.
+            if (costmap->info.resolution == map->info.resolution && costmap->info.width == map->info.width &&
+                costmap->info.height == map->info.height && costmap->info.origin == map->info.origin &&
+                costmap->data == map->data) costmap = map;
+        }
+    } catch (const std::exception& e) {
+        fail(std::string("Could not load map: ") + e.what());
+        return false;
+    }
+    if (!set_localization_map(config, transition, *map)) return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_map_ = std::move(map);
+        active_costmap_ = std::move(costmap);
+        active_map_file_ = config.map_file;
+        active_costmap_file_ = config.costmap_file;
+        have_active_maps_ = true;
+    }
+    if (static_map_srv_.getService().empty())
+        static_map_srv_ = nh_.advertiseService("/static_map", &map_changer_node::get_map, this);
+    if (static_costmap_srv_.getService().empty())
+        static_costmap_srv_ = nh_.advertiseService("/static_map_for_costmap", &map_changer_node::get_costmap, this);
+    publish_maps();
+    return true;
+}
+bool map_changer_node::initialize_map()
+{
+    if (!initial_map_ || initial_map_done_) return true;
+    geometry_msgs::PoseWithCovarianceStamped pose;
+    if (!set_map_srv_.exists() || !current_pose(pose)) {
+        status("waiting for initial localization");
+        ROS_INFO_THROTTLE(2.0, "Initial map pending: waiting for AMCL pose/service (set the actual pose in RViz)");
+        if (ros::WallTime::now() >= next_nomotion_) {
+            next_nomotion_ = ros::WallTime::now() + ros::WallDuration(1.0);
+            if (nomotion_srv_.exists()) { std_srvs::Empty request; nomotion_srv_.call(request); }
+        }
+        return false;
+    }
+    const auto& p = pose.pose.pose.position;
+    if (check_map_bounds_ && (!initial_map_bounds_.contains(p.x, p.y, map_margin_) ||
+        !initial_costmap_bounds_.contains(p.x, p.y, map_margin_))) {
+        status("waiting for initial map coverage");
+        ROS_WARN_THROTTLE(2.0, "Initial map pending: pose %.3f, %.3f outside initial crop; check RViz pose/initial_map", p.x, p.y);
+        return false;
+    }
+    const Transition initial{0, "startup", "initial_map", {}, ros::Time::now()};
+    if (!activate_map(*initial_map_, initial)) {
+        // A rejected service must not cause a continuous expensive reload loop.
+        // Retry after restart once the reported cause has been corrected.
+        initial_map_done_ = true;
+        return true;
+    }
+    initial_map_done_ = true;
+    status("initialized: " + initial_map_->map_file);
+    ROS_INFO("Initial cropped map is active; waypoint 1 does not need to be visited");
+    return true;
+}
+void map_changer_node::retire_map_servers()
+{
+    if (!replace_map_servers_ || !have_active_maps_ || ros::WallTime::now() < next_retirement_) return;
+    next_retirement_ = ros::WallTime::now() + ros::WallDuration(2.0);
+    ros::V_string nodes;
+    if (!ros::master::getNodes(nodes)) return;
+    for (const auto& configured : map_server_nodes_) {
+        const std::string node = nh_.resolveName(configured);
+        if (node == ros::this_node::getName() || std::find(nodes.begin(), nodes.end(), node) == nodes.end()) continue;
+        XmlRpc::XmlRpcValue args, response, uri;
+        args[0] = ros::this_node::getName(); args[1] = node;
+        if (!ros::master::execute("lookupNode", args, response, uri, false) ||
+            uri.getType() != XmlRpc::XmlRpcValue::TypeString) continue;
+        XmlRpc::XmlRpcValue call, publications;
+        call[0] = ros::this_node::getName();
+        if (!node_rpc(std::string(uri), "getPublications", call, publications)) {
+            ROS_WARN_THROTTLE(5.0, "Could not inspect original map server %s at %s", node.c_str(), std::string(uri).c_str());
+            continue;
+        }
+        const auto& topics = publications[2];
+        if (topics.getType() != XmlRpc::XmlRpcValue::TypeArray) continue;
+        bool has_map = false, map_only = true;
+        for (int i = 0; i < topics.size(); ++i) {
+            if (topics[i].getType() != XmlRpc::XmlRpcValue::TypeArray || topics[i].size() != 2 ||
+                topics[i][0].getType() != XmlRpc::XmlRpcValue::TypeString ||
+                topics[i][1].getType() != XmlRpc::XmlRpcValue::TypeString) { map_only = false; break; }
+            const std::string topic = topics[i][0], type = topics[i][1];
+            const bool grid = (topic == "/map" || topic == "/map_for_costmap") && type == "nav_msgs/OccupancyGrid";
+            const bool metadata = (topic == "/map_metadata" || topic == "/map_metadata_for_costmap") && type == "nav_msgs/MapMetaData";
+            has_map = has_map || grid;
+            if (!grid && !metadata && !(topic == "/rosout" && type == "rosgraph_msgs/Log")) map_only = false;
+        }
+        if (!has_map || !map_only) {
+            ROS_WARN_THROTTLE(5.0, "Not retiring %s: publications are not limited to map-server topics", node.c_str());
+            continue;
+        }
+        call[1] = "map_changer has taken over map publication and GetMap services";
+        if (node_rpc(std::string(uri), "shutdown", call, response)) {
+            ROS_INFO("Retired original map server %s; its previous map can be released", node.c_str());
+            // Reassert active data after the final old latched deliveries.
+            std::lock_guard<std::mutex> lock(mutex_);
+            refresh_maps_ = true;
+            refresh_after_ = ros::WallTime::now() + ros::WallDuration(0.2);
+        } else {
+            ROS_WARN_THROTTLE(5.0, "Could not retire %s; its previous map may still be retained", node.c_str());
+        }
+    }
+}
 void map_changer_node::loop()
 {
+    if (!initialize_map()) return;
+    retire_map_servers();
     bool refresh = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -252,31 +455,9 @@ void map_changer_node::loop()
         }
     }
     status("changing: " + transition.source_id + " -> " + transition.target_id);
-    nav_msgs::OccupancyGrid map, costmap;
-    try {
-        const auto& config = config_list_[transition.config_index];
-        map = load_map(config.map_file, global_frame_);
-        costmap = config.costmap_file == config.map_file ? map : load_map(config.costmap_file, global_frame_);
-    } catch (const std::exception& e) {
-        fail(std::string("Could not load map: ") + e.what());
-        return;
-    }
     // Validate/load both grids before changing anything, then give AMCL the
     // exact localization grid instead of querying an ambiguous /static_map.
-    if (!set_localization_map(transition, map)) return;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        active_map_ = std::move(map);
-        active_costmap_ = std::move(costmap);
-        have_active_maps_ = true;
-    }
-    // Until the first successful switch, the existing servers remain the only
-    // source of maps. Afterwards new GetMap clients must receive the active grid.
-    if (static_map_srv_.getService().empty())
-        static_map_srv_ = nh_.advertiseService("/static_map", &map_changer_node::get_map, this);
-    if (static_costmap_srv_.getService().empty())
-        static_costmap_srv_ = nh_.advertiseService("/static_map_for_costmap", &map_changer_node::get_costmap, this);
-    publish_maps();
+    if (!activate_map(config_list_[transition.config_index], transition)) return;
     status("changed: " + transition.source_id + " -> " + transition.target_id);
     ROS_INFO("Map transition completed after waypoint %s", transition.source_id.c_str());
 }
