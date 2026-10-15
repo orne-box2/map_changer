@@ -44,7 +44,7 @@ bool node_rpc(const std::string& uri, const char* method, const XmlRpc::XmlRpcVa
 map_changer_node::map_changer_node()
 {
     std::string file_path, pose_topic, set_map_service, nomotion_service;
-    pnh_.param("file_path", file_path, ros::package::getPath("map_changer") + "/config/test1.yaml");
+    pnh_.param("file_path", file_path, ros::package::getPath("map_changer") + "/config/tsukuba.yaml");
     pnh_.param("pose_timeout", pose_timeout_, 5.0);
     pnh_.param("check_map_bounds", check_map_bounds_, true);
     pnh_.param("map_margin", map_margin_, 0.6);

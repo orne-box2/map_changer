@@ -1,5 +1,5 @@
 <launch>
-<arg name="file_path"   default="$(find map_changer)/config/test1.yaml"/>
+<arg name="file_path"   default="$(find map_changer)/config/tsukuba.yaml"/>
 <arg name="pose_topic" default="/amcl_pose"/>
 <arg name="localization_node" default="/amcl"/>
 <arg name="set_map_service" default="/set_map"/>
