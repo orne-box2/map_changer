@@ -243,6 +243,12 @@ void map_changer_node::bridge_tf(const ros::WallTimerEvent&)
 }
 bool map_changer_node::set_localization_map(const MapConfig& config, const Transition& transition, const nav_msgs::OccupancyGrid& grid)
 {
+    bool queue_enabled=false;
+    nh_.param("/waypoint_manager/waypoint_to_posestamped/use_queue_wait", queue_enabled, false);
+    if (config.reset_initialpose && queue_enabled) {
+        fail("reset_initialpose is incompatible with queue_wait; use same-coordinate maps and reset_initialpose: false");
+        return false;
+    }
     if (!grid.info.width || !grid.info.height || !std::isfinite(grid.info.resolution) || grid.info.resolution <= 0 ||
         grid.data.size() != static_cast<std::size_t>(grid.info.width) * grid.info.height ||
         frame(grid.header.frame_id) != global_frame_) {
