@@ -1,0 +1,5 @@
+config:
+  - waypoint_id: registed_0_448334000000
+    map_file: /home/orne-box/script_orne/map/tsukuba/2d/iias_ex/iias_2F
+  - waypoint_id: registed_0_1195264000000
+    map_file: /home/orne-box/script_orne/map/tsukuba/2d/iias_ex/iias_goal

@@ -48,7 +48,7 @@ void map_changer_node::cb_result(const move_base_msgs::MoveBaseActionResult::Con
             std::array<std::string, 2>& config = *itr;
             if (config[0] == wp_->identity && config[0] == old_id)
             {
-                // ros::Duration(wait_time_).sleep();
+                ros::Duration(wait_time_).sleep();
                 call_next_wp();
                 reach_goal_ = true;
                 index_ = std::distance(config_list_.begin(), itr);
