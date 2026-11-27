@@ -1,0 +1,58 @@
+# tsukuba261003_edited_2.yaml / routes/tsukuba261003.yaml.
+# Numbers match the zero-based waypoint labels shown in RViz.
+# Each change runs when the waypoint server advances from the listed ID.
+initial_map:
+  map_file: ../map/tsukuba_res0.5_01.yaml
+
+config:
+  # Waypoint 18 -> 19: cut 01 -> 02
+  - waypoint_id: registed_joy_9f637ae992de440aa42fe2544ffefc40
+    map_file: ../map/tsukuba_res0.5_02.yaml
+  # Waypoint 56 -> 57: cut 02 -> 03
+  - waypoint_id: registed_joy_a93cd24792834d859f3f6418b6901a82
+    map_file: ../map/tsukuba_res0.5_03.yaml
+  # Waypoint 90 -> 91: cut 03 -> 04
+  - waypoint_id: registed_joy_55c3036c7baf42d6967851ac3ea14f97
+    map_file: ../map/tsukuba_res0.5_04.yaml
+  # Waypoint 108 -> 109: cut 04 -> 05
+  - waypoint_id: registed_joy_a0a0a5d95563460e92820d9930f6e53a
+    map_file: ../map/tsukuba_res0.5_05.yaml
+  # Waypoint 136 -> 137: cut 05 -> 06
+  - waypoint_id: registed_joy_38e18df7109747f6b843f370133ba8ba
+    map_file: ../map/tsukuba_res0.5_06.yaml
+  # Waypoint 172 -> 173: cut 06 -> 07
+  - waypoint_id: registed_joy_e422deba6a8943429dc144fb51b912fd
+    map_file: ../map/tsukuba_res0.5_07.yaml
+  # Waypoint 215 -> 216: cut 07 -> 08
+  - waypoint_id: registed_joy_30ed3b99fb144c7996f70996dea03788
+    map_file: ../map/tsukuba_res0.5_08.yaml
+  # Waypoint 236 -> 237: cut 08 -> 09
+  - waypoint_id: registed_joy_2b3c11bed9ba4408b52dfb220001dd65
+    map_file: ../map/tsukuba_res0.5_09.yaml
+  # Waypoint 286 -> 287: cut 09 -> 10
+  - waypoint_id: registed_joy_46cb0bfb50a04fe99d98bdcad70caed1
+    map_file: ../map/tsukuba_res0.5_10.yaml
+  # Waypoint 390 -> 391: cut 10 -> 09
+  - waypoint_id: registed_joy_092711ffbd084af08280b2b0bf00ef95
+    map_file: ../map/tsukuba_res0.5_09.yaml
+  # Waypoint 441 -> 442: cut 09 -> 08
+  - waypoint_id: registed_joy_e4857e1e0fbd4dcab2588525692124d5
+    map_file: ../map/tsukuba_res0.5_08.yaml
+  # Waypoint 462 -> 463: cut 08 -> 07
+  - waypoint_id: registed_joy_3ee3f87cab794a42a9b5d94eea674324
+    map_file: ../map/tsukuba_res0.5_07.yaml
+  # Waypoint 512 -> 513: cut 07 -> 06
+  - waypoint_id: registed_joy_a4e800924b604c7397c5c9003374f6f6
+    map_file: ../map/tsukuba_res0.5_06.yaml
+  # Waypoint 559 -> 560: cut 06 -> 05
+  - waypoint_id: registed_joy_9e5b262ebdbc4f4da6216f671d9af891
+    map_file: ../map/tsukuba_res0.5_05.yaml
+  # Waypoint 601 -> 602: cut 05 -> 04
+  - waypoint_id: registed_joy_39ce21b443b04da784efabb39d58fcaf
+    map_file: ../map/tsukuba_res0.5_04.yaml
+  # Waypoint 643 -> 644: cut 04 -> 03
+  - waypoint_id: registed_joy_8b4545375df5457da07a8830c7028d1c
+    map_file: ../map/tsukuba_res0.5_03.yaml
+  # Waypoint 650 -> 651: cut 03 -> 01
+  - waypoint_id: registed_joy_0ab7e4d8ccbf4b8eb08d1179c3c9f8b2
+    map_file: ../map/tsukuba_res0.5_01.yaml
