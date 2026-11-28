@@ -1,0 +1,6 @@
+image: tsukuba_res0.3_08.pgm
+resolution: 0.3
+origin: [-155.0, -452.0, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
